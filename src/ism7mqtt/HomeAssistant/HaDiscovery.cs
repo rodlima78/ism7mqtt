@@ -281,48 +281,127 @@ namespace ism7mqtt.HomeAssistant
                     }
                     if (numeric.UnitName != null)
                     {
-                        yield return ("unit_of_measurement", _localizer[numeric.UnitName]);
-                        if (numeric.UnitName == "°C")
+                        string unit = _localizer[numeric.UnitName];
+
+                        switch(numeric.UnitName)
                         {
+                        case "°C":
                             yield return ("icon", "mdi:thermometer");
                             yield return ("state_class", "measurement");
-                        }
-                        else if (numeric.UnitName == "%")
-                        {
+                            yield return ("device_class", "temperature");
+                            break;
+
+                        case "%":
                             yield return ("state_class", "measurement");
-                        }
-                        else if (numeric.UnitName == "kWh")
-                        {
-                            yield return ("state_class", "total_increasing");
+                            break;
+
+                        case "%rH":
+                        case "%r.H.":
+                            yield return ("state_class", "measurement");
+                            yield return ("device_class", "humidity");
+                            unit = "%";
+                            break;
+
+                        case "Wh":
+                        case "kWh":
+                        case "GWh":
+                            if(numeric.Name.ToLower().Contains("vortag") ||
+                               numeric.Name.ToLower().Contains("vorjahr") ||
+                               numeric.Name.ToLower().Contains("vorvorjahr") ||
+                               numeric.Name.ToLower().Contains("actueller tag") ||
+                               numeric.Name.ToLower().Contains("actueller monat") ||
+                               numeric.Name.ToLower().Contains("actuelles jahr"))
+                            {
+                                yield return ("state_class", "measurement");
+                            }
+                            else
+                            {
+                                yield return ("state_class", "total_increasing");
+                            }
                             yield return ("device_class", "energy");
-                        }
-                        else if (numeric.UnitName == "W")
-                        {
+                            break;
+
+                        case "W":
+                        case "kW":
                             yield return ("state_class", "measurement");
                             yield return ("device_class", "power");
-                        }
-                        else if (numeric.UnitName == "kW")
-                        {
-                            yield return ("state_class", "measurement");
-                            yield return ("device_class", "power");
-                        }
-                        else if (numeric.UnitName == "Hz")
-                        {
+                            break;
+
+                        case "Hz":
                             yield return ("state_class", "measurement");
                             yield return ("device_class", "frequency");
-                        }
-                        else if (numeric.UnitName == "l/min")
-                        {
+                            break;
+
+                        case "l/min":
+                        case "L/min":
                             yield return ("state_class", "measurement");
-                        }
-                        else if (numeric.UnitName == "L/min")
-                        {
+                            yield return ("device_class", "volume_flow_rate");
+                            unit = "L/min";
+                            break;
+
+                        case "m³/h":
+                        case "m3/h":
                             yield return ("state_class", "measurement");
-                        }
-                        else if (numeric.UnitName == "U/min")
-                        {
+                            yield return ("device_class", "volume_flow_rate");
+                            unit = "m³/h";
+                            break;
+
+                        case "ppm":
                             yield return ("state_class", "measurement");
+                            yield return ("device_class", "carbon_dioxide");
+                            break;
+
+                        case "U/min":
+                        case "UPM":
+                            yield return ("state_class", "measurement");
+                            unit = "rpm";
+                            break;
+
+                        case "sec":
+                            yield return ("state_class", "measurement");
+                            yield return ("device_class", "duration");
+                            unit = "s";
+                            break;
+
+                        case "ms":
+                        case "s":
+                        case "min":
+                        case "h":
+                            yield return ("state_class", "measurement");
+                            yield return ("device_class", "duration");
+                            break;
+
+                        case "Std":
+                            yield return ("state_class", "measurement");
+                            yield return ("device_class", "duration");
+                            unit = "h";
+                            break;
+
+                        case "Tage":
+                            yield return ("state_class", "measurement");
+                            yield return ("device_class", "duration");
+                            unit = "d";
+                            break;
+
+                        case "A":
+                        case "mA":
+                            yield return ("state_class", "measurement");
+                            yield return ("device_class", "current");
+                            break;
+
+                        case "bar":
+                        case "Pa":
+                            yield return ("state_class", "measurement");
+                            yield return ("device_class", "pressure");
+                            break;
+
+                        case "V":
+                            yield return ("state_class", "measurement");
+                            yield return ("device_class", "voltage");
+                            break;
                         }
+
+                        yield return ("unit_of_measurement", unit);
                     }
                     break;
                 case ListParameterDescriptor list:
