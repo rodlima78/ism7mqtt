@@ -279,7 +279,19 @@ namespace ism7mqtt.HomeAssistant
                         if (numeric.StepWidth != null)
                             yield return ("step", numeric.StepWidth);
                     }
-                    if (numeric.UnitName != null)
+                    if (numeric.UnitName == null)
+                    {
+                        switch(numeric.Name)
+                        {
+                        case "EEV HZ":
+                            yield return ("state_class", "measurement");
+                            break;
+                        case "EEV K":
+                            yield return ("state_class", "measurement");
+                            break;
+                        }
+                    }
+                    else
                     {
                         string unit = _localizer[numeric.UnitName];
 
