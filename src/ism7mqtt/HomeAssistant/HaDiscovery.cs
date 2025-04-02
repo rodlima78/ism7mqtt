@@ -239,6 +239,9 @@ namespace ism7mqtt.HomeAssistant
                         case "EEV K":
                             yield return ("state_class", "measurement");
                             break;
+                        case "Verdichterstarts":
+                            yield return ("state_class", "total_increasing");
+                            break;
                         }
                     }
                     else
