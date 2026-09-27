@@ -137,9 +137,30 @@ namespace ism7mqtt
                                 Console.Error.WriteLine("reconnect failed");
                             }
                         };
+                        // The session is clean, so the broker forgets every subscription when the connection drops (a
+                        // broker restart, for one). Subscribe on EVERY connect, not only the first; after a reconnect,
+                        // publish the discovery info again too, since Home Assistant's birth message may have been
+                        // sent while nobody was subscribed to hear it.
+                        var reconnecting = false;
+                        mqttClient.ConnectedAsync += async e =>
+                        {
+                            await mqttClient.SubscribeAsync($"Wolf/{ip}/+/set");
+                            await mqttClient.SubscribeAsync($"Wolf/{ip}/+/set/#");
+                            if (!String.IsNullOrEmpty(discoveryId))
+                            {
+                                await mqttClient.SubscribeAsync("homeassistant/status");
+                            }
+                            if (reconnecting)
+                            {
+                                Console.Error.WriteLine("mqtt reconnected - subscriptions restored");
+                                if (_haDiscovery is not null)
+                                {
+                                    await _haDiscovery.PublishDiscoveryInfo(cts.Token);
+                                }
+                            }
+                            reconnecting = true;
+                        };
                         await mqttClient.ConnectAsync(mqttOptions, cts.Token);
-                        await mqttClient.SubscribeAsync($"Wolf/{ip}/+/set");
-                        await mqttClient.SubscribeAsync($"Wolf/{ip}/+/set/#");
                         var client = new Ism7Client((config, token) => OnMessage(mqttClient, config, enableDebug, token), parameter, ip, localizer, parameterXmlOverride)
                         {
                             Interval = interval,
@@ -150,7 +171,6 @@ namespace ism7mqtt
 
                         if (!String.IsNullOrEmpty(discoveryId))
                         {
-                            await mqttClient.SubscribeAsync("homeassistant/status");
                             client.OnInitializationFinishedAsync = (config, c) =>
                             {
                                 _haDiscovery =  new HaDiscovery(config, mqttClient, discoveryId, localizer)
