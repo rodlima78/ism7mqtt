@@ -17,10 +17,21 @@ namespace ism7mqtt.ISM7.Xml
 
         public override bool HasValue => _value.HasValue;
 
+        private const ushort NotAvailable = 0x8000;
+
+        private bool IsSigned => Type is "SS" or "SS10" or "SS100" or "SSPR";
+
         public override JsonValue GetValue()
         {
             if (!HasValue)
                 throw new InvalidOperationException();
+            if (_value.Value == NotAvailable && IsSigned)
+            {
+                // The controller sends the smallest signed value while it has no reading
+                // (for instance a sensor during start-up), which is not a measurement.
+                _value = null;
+                return null;
+            }
             JsonValue result;
             switch (Type)
             {

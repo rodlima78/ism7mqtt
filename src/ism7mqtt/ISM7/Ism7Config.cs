@@ -492,7 +492,7 @@ namespace ism7mqtt
             public KeyValuePair<string, JsonNode> GetJsonValue()
             {
                 JsonNode value = _converter.GetValue();
-                if (_descriptor is ListParameterDescriptor listDescriptor)
+                if (value is not null && _descriptor is ListParameterDescriptor listDescriptor)
                 {
                     if (listDescriptor.Options.Any())
                     {
@@ -521,7 +521,8 @@ namespace ism7mqtt
             public IEnumerable<MqttMessage> GetSingleValues()
             {
                 var json = _converter.GetValue();
-                var text = JsonSerializer.Serialize(json, JsonContext.Default.JsonValue);
+                // Home Assistant reads the payload "None" as an unknown state.
+                var text = json is null ? "None" : JsonSerializer.Serialize(json, JsonContext.Default.JsonValue);
                 var result = new MqttMessage(MqttName, text);
                 if (IsDuplicate)
                 {

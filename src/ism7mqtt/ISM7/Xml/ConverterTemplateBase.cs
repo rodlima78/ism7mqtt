@@ -29,6 +29,7 @@ namespace ism7mqtt.ISM7.Xml
 
         public abstract bool HasValue { get; }
 
+        /// <summary>The value received, or null when the device reported that it has none.</summary>
         public abstract JsonValue GetValue();
 
         public abstract IEnumerable<InfoWrite> GetWrite(string value);
