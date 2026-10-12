@@ -408,6 +408,46 @@ namespace ism7mqtt
             }
 
             _ = RefreshTimeprogsAsync(busAddresses, cancellationToken);
+            await SubscribeErrorStatesAsync(cancellationToken);
+        }
+
+        /// <summary>
+        /// Subscribes to the fault lists of every device, as Smartset does: one push bundle carrying an error state
+        /// read for all bus addresses. The module answers with each device's list and again whenever one changes.
+        /// </summary>
+        private async Task SubscribeErrorStatesAsync(CancellationToken cancellationToken)
+        {
+            var addresses = _config.ErrorStateAddresses.ToList();
+            if (addresses.Count == 0) return;
+            var bundleId = NextBundleId();
+            _dispatcher.Subscribe(x => x.MessageType == PayloadType.TgrBundleResp && ((TelegramBundleResp)x).BundleId == bundleId, OnErrorStatesAsync);
+            await SendAsync(new TelegramBundleReq
+            {
+                AbortOnError = false,
+                BundleId = bundleId,
+                GatewayId = "1",
+                TelegramBundleType = TelegramBundleType.push,
+                EStRead = new TelegramBundleReq.ErrorStateRead
+                {
+                    Seq = bundleId,
+                    VisibleDeviceAdresses = String.Join(",", addresses)
+                }
+            }, cancellationToken);
+        }
+
+        private async Task OnErrorStatesAsync(IResponse response, CancellationToken cancellationToken)
+        {
+            var resp = (TelegramBundleResp)response;
+            if (!String.IsNullOrEmpty(resp.Errormsg) || resp.State != TelegrResponseState.OK)
+            {
+                await Console.Error.WriteLineAsync($"fault list bundle {resp.BundleId}: state '{resp.State}' {resp.Errormsg}");
+                return;
+            }
+            if (resp.ErrorStates is null || resp.ErrorStates.Count == 0) return;
+            if (_config.ProcessData(resp.ErrorStates))
+            {
+                await _messageHandler(_config, cancellationToken);
+            }
         }
 
         private async Task RefreshTimeprogsAsync(List<string> busAddresses, CancellationToken cancellationToken)

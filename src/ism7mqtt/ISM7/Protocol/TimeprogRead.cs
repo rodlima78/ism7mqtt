@@ -27,7 +27,7 @@ namespace ism7mqtt.ISM7.Protocol
         [XmlAttribute("hk")]
         public int HzkInstance { get; set; }
 
-        /// <summary>1 Monday to 7 Sunday.</summary>
+        /// <summary>0 Sunday, 1 Monday ... 6 Saturday (the .NET DayOfWeek numbering).</summary>
         [XmlAttribute("d")]
         public int DayOfWeek { get; set; }
     }

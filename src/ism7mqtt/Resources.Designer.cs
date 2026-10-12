@@ -139,6 +139,12 @@ namespace ism7mqtt {
         ///      &lt;InactiveConditionId&gt;False&lt;/InactiveConditionId&gt;
         ///      &lt;IsSnapsho [rest of string was truncated]&quot;;.
         /// </summary>
+        internal static string FaultMessages {
+            get {
+                return ResourceManager.GetString("FaultMessages", resourceCulture);
+            }
+        }
+        
         internal static string ParameterTemplates {
             get {
                 return ResourceManager.GetString("ParameterTemplates", resourceCulture);

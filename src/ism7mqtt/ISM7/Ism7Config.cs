@@ -92,7 +92,12 @@ namespace ism7mqtt
             {
                 var device = _deviceTemplates.First(x => x.DTID == configDevice.DeviceTemplateId);
                 var tids = configDevice.Parameter.ToHashSet();
-                devices.Add(new RunningDevice(device.Name, ip, configDevice.ReadBusAddress, configDevice.WriteBusAddress, _parameterTemplates.Where(x => tids.Contains(x.PTID)), _converterTemplates.Where(x => tids.Contains(x.CTID)), _localizer));
+                devices.Add(new RunningDevice(device.Name, ip, configDevice.ReadBusAddress, configDevice.WriteBusAddress, _parameterTemplates.Where(x => tids.Contains(x.PTID)), _converterTemplates.Where(x => tids.Contains(x.CTID)), _localizer)
+                {
+                    DeviceTemplateId = device.DTID,
+                    // The module keeps one fault list per bus address; the first device configured there owns it.
+                    ReportsFaults = devices.Count == 0,
+                });
             }
         }
 
@@ -259,6 +264,26 @@ namespace ism7mqtt
             return (changed, confirm);
         }
 
+        /// <summary>The bus addresses whose fault lists are read, as the module expects them ("0x08").</summary>
+        public IEnumerable<string> ErrorStateAddresses => _devices
+            .Where(x => x.Value.Any(d => d.ReportsFaults))
+            .Select(x => $"0x{x.Key:X2}");
+
+        /// <summary>Replaces the fault list of every bus address the response reports on.</summary>
+        public bool ProcessData(IEnumerable<ErrorStateResp> data)
+        {
+            var changed = false;
+            foreach (var group in data.GroupBy(x => Converter.FromHex(x.BusAddress)))
+            {
+                if (!_devices.TryGetValue(group.Key, out var devices)) continue;
+                foreach (var device in devices.Where(x => x.ReportsFaults))
+                {
+                    if (device.SetFaults(group)) changed = true;
+                }
+            }
+            return changed;
+        }
+
         public IEnumerable<RunningDevice> Devices => _devices.SelectMany(x => x.Value);
 
         public IEnumerable<JsonMessage> JsonMessages => _devices.Values
@@ -301,7 +326,73 @@ namespace ism7mqtt
 
             public string WriteAddress { get; }
 
-            public bool HasValue => _parameter.Any(x => x.HasValue);
+            public bool HasValue => _parameter.Any(x => x.HasValue) || _faults is not null;
+
+            public int DeviceTemplateId { get; init; }
+
+            /// <summary>Whether this device publishes the fault list of its bus address.</summary>
+            public bool ReportsFaults { get; init; }
+
+            public const string FaultTopic = "Stoermeldung";
+            public const string FaultListTopic = "Stoermeldungen";
+            public const string NoActiveFault = "Keine";
+
+            /// <summary>The module reports at most ten entries per device; codes outside 1-255 are not faults.</summary>
+            private const int MaxFaults = 10;
+
+            private List<FaultEntry> _faults;
+
+            public record FaultEntry(int Index, int Code, string Text, string Start, string Stop, bool Active)
+            {
+                public string Label => Text is null ? Code.ToString() : $"{Code} {Text}";
+            }
+
+            public IReadOnlyList<FaultEntry> Faults => _faults;
+
+            public bool SetFaults(IEnumerable<ErrorStateResp> entries)
+            {
+                var faults = entries
+                    .Where(x => x.Code > 0 && x.Code <= 255)
+                    .OrderBy(x => x.Index)
+                    .Take(MaxFaults)
+                    .Select(x => new FaultEntry(x.Index, x.Code, FaultMessageTexts.Default.Get(x.Code, DeviceTemplateId), x.Start, x.Stop, x.Active))
+                    .ToList();
+                if (_faults is not null && _faults.SequenceEqual(faults)) return false;
+                _faults = faults;
+                return true;
+            }
+
+            /// <summary>The active faults, e.g. "12 Kesselfühler defekt", or <see cref="NoActiveFault"/>.</summary>
+            public string ActiveFaultText
+            {
+                get
+                {
+                    var active = _faults?.Where(x => x.Active).Select(x => x.Label).ToList();
+                    return active is null || active.Count == 0 ? NoActiveFault : String.Join("; ", active);
+                }
+            }
+
+            public JsonObject FaultListJson()
+            {
+                var entries = new JsonArray();
+                foreach (var fault in _faults ?? new List<FaultEntry>())
+                {
+                    entries.Add(new JsonObject
+                    {
+                        ["index"] = fault.Index,
+                        ["code"] = fault.Code,
+                        ["text"] = fault.Text,
+                        ["start"] = fault.Start,
+                        ["stop"] = fault.Stop,
+                        ["active"] = fault.Active,
+                    });
+                }
+                return new JsonObject
+                {
+                    ["active"] = _faults?.Count(x => x.Active) ?? 0,
+                    ["entries"] = entries,
+                };
+            }
 
             private void EnsureUniqueParameterNames()
             {
@@ -405,8 +496,13 @@ namespace ism7mqtt
                         .Where(x => x.HasValue)
                         .Distinct()
                         .ToList();
-                    if (parameters.Count == 0) return null;
+                    if (parameters.Count == 0 && _faults is null) return null;
                     var result = new JsonObject();
+                    if (_faults is not null)
+                    {
+                        result.Add(FaultTopic, ActiveFaultText);
+                        result.Add(FaultListTopic, FaultListJson());
+                    }
                     foreach (var parameter in parameters)
                     {
                         var property = parameter.GetJsonValue();
@@ -441,6 +537,11 @@ namespace ism7mqtt
                             property.AddPrefix(MqttTopic);
                             yield return property;
                         }
+                    }
+                    if (_faults is not null)
+                    {
+                        yield return new MqttMessage(FaultTopic, ActiveFaultText).AddPrefix(MqttTopic);
+                        yield return new MqttMessage(FaultListTopic, JsonSerializer.Serialize(FaultListJson(), JsonContext.Default.JsonObject)).AddPrefix(MqttTopic);
                     }
                 }
             }

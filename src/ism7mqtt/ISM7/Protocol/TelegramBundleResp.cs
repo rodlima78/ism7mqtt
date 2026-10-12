@@ -33,6 +33,9 @@ namespace ism7mqtt.ISM7.Protocol
         [XmlElement("s03f3ac")]
         public List<TimeprogWriteResp> TimeprogWriteTelegrams { get; set; }
 
+        [XmlElement("ers")]
+        public List<ErrorStateResp> ErrorStates { get; set; }
+
         public PayloadType MessageType => PayloadType.TgrBundleResp;
     }
 }

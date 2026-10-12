@@ -154,7 +154,31 @@ namespace ism7mqtt.HomeAssistant
                 message.Add("device", GetDiscoveryDeviceInfo(device));
                 result.Add(new JsonMessage(discoveryTopic, message));
             }
+            if (device.ReportsFaults)
+            {
+                result.Add(GetFaultDiscoveryInfo(device));
+            }
             return result;
+        }
+
+        /// <summary>
+        /// The device's fault list: the state is the active faults ("12 Kesselfühler defekt", or "Keine"), the
+        /// attributes the whole list with each fault's code, text, start, end and whether it is active.
+        /// </summary>
+        private JsonMessage GetFaultDiscoveryInfo(Ism7Config.RunningDevice device)
+        {
+            var uniqueId = LaunderHomeassistantId($"{_discoveryId}_{device.Name}_{device.WriteAddress}_{Ism7Config.RunningDevice.FaultTopic}");
+            var message = new JsonObject
+            {
+                { "unique_id", uniqueId },
+                { "state_topic", $"{device.MqttTopic}/{Ism7Config.RunningDevice.FaultTopic}" },
+                { "json_attributes_topic", $"{device.MqttTopic}/{Ism7Config.RunningDevice.FaultListTopic}" },
+                { "name", "Störmeldung" },
+                { "default_entity_id", $"sensor.{uniqueId}" },
+                { "icon", "mdi:alert-circle-outline" },
+                { "device", GetDiscoveryDeviceInfo(device) },
+            };
+            return new JsonMessage($"homeassistant/sensor/{uniqueId}/config", message);
         }
 
         private JsonObject GetDiscoveryDeviceInfo(Ism7Config.RunningDevice device)
