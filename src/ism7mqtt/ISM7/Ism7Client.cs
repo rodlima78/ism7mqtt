@@ -82,12 +82,13 @@ namespace ism7mqtt
             try
             {
                 var writeRequests = _config.GetWriteRequest(mqttTopic, data).ToList();
-                if (writeRequests.Count == 0)
+                var timeprogWrites = _config.GetTimeprogWriteRequest(mqttTopic, data).ToList();
+                if (writeRequests.Count == 0 && timeprogWrites.Count == 0)
                 {
                     Console.WriteLine($"nothing to send for topic '{mqttTopic}' with payload '{data.ToJsonString()}'");
                     return Task.CompletedTask;
                 }
-                return OnCommandAsync(writeRequests, cancellationToken);
+                return OnCommandAsync(writeRequests, timeprogWrites, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -101,17 +102,72 @@ namespace ism7mqtt
             try
             {
                 var writeRequests = _config.GetWriteRequest(mqttTopic, propertyParts, value).ToList();
-                if (writeRequests.Count == 0)
+                var timeprogWrites = _config.GetTimeprogWriteRequest(mqttTopic, propertyParts, value).ToList();
+                if (writeRequests.Count == 0 && timeprogWrites.Count == 0)
                 {
                     Console.WriteLine($"nothing to send for topic '{mqttTopic}' with payload '{value}'");
                     return Task.CompletedTask;
                 }
-                return OnCommandAsync(writeRequests, cancellationToken);
+                return OnCommandAsync(writeRequests, timeprogWrites, cancellationToken);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"error for topic '{mqttTopic}' with payload '{value}'\n{ex.Message}");
                 return Task.CompletedTask;
+            }
+        }
+
+        private async Task OnCommandAsync(List<InfoWrite> writeRequests, List<TimeprogWrite> timeprogWrites, CancellationToken cancellationToken)
+        {
+            if (writeRequests.Count > 0)
+            {
+                await OnCommandAsync(writeRequests, cancellationToken);
+            }
+            // Time programme writes go in write bundles of their own, at most seven entries each, as reads do.
+            for (int i = 0; i < timeprogWrites.Count; i += Ism7Config.TimeprogBundleSize)
+            {
+                var writes = timeprogWrites.Skip(i).Take(Ism7Config.TimeprogBundleSize).ToList();
+                foreach (var write in writes)
+                {
+                    write.Seq = $"D;{IdGenerator.GetNextSequenceId()}";
+                }
+                var request = new TelegramBundleReq
+                {
+                    AbortOnError = true,
+                    BundleId = NextBundleId(),
+                    GatewayId = "1",
+                    TelegramBundleType = TelegramBundleType.write,
+                    TimeprogWriteTelegrams = writes
+                };
+                _dispatcher.SubscribeOnce(x => x.MessageType == PayloadType.TgrBundleResp && ((TelegramBundleResp)x).BundleId == request.BundleId, OnTimeprogWriteResponse);
+                await SendAsync(request, cancellationToken);
+            }
+        }
+
+        private async Task OnTimeprogWriteResponse(IResponse response, CancellationToken cancellationToken)
+        {
+            var resp = (TelegramBundleResp)response;
+            if (!String.IsNullOrEmpty(resp.Errormsg) || resp.State != TelegrResponseState.OK)
+            {
+                await Console.Error.WriteLineAsync($"time programme write {resp.BundleId}: state '{resp.State}' {resp.Errormsg}");
+                return;
+            }
+            if (resp.TimeprogWriteTelegrams is null) return;
+            foreach (var failed in resp.TimeprogWriteTelegrams.Where(x => x.State != TelegrResponseState.OK))
+            {
+                await Console.Error.WriteLineAsync($"time programme write refused: type {failed.ProgramType}, programme {failed.HeatprogNumber}, day {failed.DayOfWeek}, state '{failed.State}'");
+            }
+            var (changed, confirm) = _config.ProcessData(resp.TimeprogWriteTelegrams.Where(x => x.State == TelegrResponseState.OK));
+            if (changed)
+            {
+                await _messageHandler(_config, cancellationToken);
+            }
+            // Read the days back, so what is published is what the BM-2 stored, not what was sent. Not awaited:
+            // this runs on the response path, which must not wait for another response.
+            foreach (var group in confirm.GroupBy(x => x.busAddress))
+            {
+                var reads = group.Select(x => x.read).ToList();
+                _ = PullTimeprogBundlesAsync(group.Key, reads, cancellationToken);
             }
         }
 
@@ -383,39 +439,59 @@ namespace ism7mqtt
             {
                 foreach (var reads in _config.GetTimeprogBundlesForDevice(busAddress))
                 {
-                    var bundleId = NextBundleId();
-                    var done = new SemaphoreSlim(0, 1);
-                    _dispatcher.SubscribeOnce(
-                        x => x.MessageType == PayloadType.TgrBundleResp && ((TelegramBundleResp)x).BundleId == bundleId,
-                        async (r, c) =>
-                        {
-                            try
-                            {
-                                await OnTimeprogValuesAsync(r, c);
-                            }
-                            finally
-                            {
-                                done.Release();
-                            }
-                        });
-                    foreach (var read in reads)
-                    {
-                        read.BusAddress = busAddress;
-                        read.Seq = $"D;{IdGenerator.GetNextSequenceId()}";
-                    }
-                    await SendAsync(new TelegramBundleReq
-                    {
-                        AbortOnError = false,
-                        BundleId = bundleId,
-                        GatewayId = "1",
-                        TelegramBundleType = TelegramBundleType.pull,
-                        TimeprogReadTelegrams = reads
-                    }, cancellationToken);
-                    if (!await done.WaitAsync(TimeprogTimeout, cancellationToken))
-                    {
-                        await Console.Error.WriteLineAsync($"no answer to time programme bundle {bundleId} for {busAddress}");
-                    }
+                    await PullTimeprogBundleAsync(busAddress, reads, cancellationToken);
                 }
+            }
+        }
+
+        private async Task PullTimeprogBundlesAsync(string busAddress, List<TimeprogRead> reads, CancellationToken cancellationToken)
+        {
+            try
+            {
+                for (int i = 0; i < reads.Count; i += Ism7Config.TimeprogBundleSize)
+                {
+                    await PullTimeprogBundleAsync(busAddress, reads.Skip(i).Take(Ism7Config.TimeprogBundleSize).ToList(), cancellationToken);
+                }
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                await Console.Error.WriteLineAsync($"time programme read-back failed: {ex.Message}");
+            }
+        }
+
+        private async Task PullTimeprogBundleAsync(string busAddress, List<TimeprogRead> reads, CancellationToken cancellationToken)
+        {
+            var bundleId = NextBundleId();
+            var done = new SemaphoreSlim(0, 1);
+            _dispatcher.SubscribeOnce(
+                x => x.MessageType == PayloadType.TgrBundleResp && ((TelegramBundleResp)x).BundleId == bundleId,
+                async (r, c) =>
+                {
+                    try
+                    {
+                        await OnTimeprogValuesAsync(r, c);
+                    }
+                    finally
+                    {
+                        done.Release();
+                    }
+                });
+            foreach (var read in reads)
+            {
+                read.BusAddress = busAddress;
+                read.Seq = $"D;{IdGenerator.GetNextSequenceId()}";
+            }
+            await SendAsync(new TelegramBundleReq
+            {
+                AbortOnError = false,
+                BundleId = bundleId,
+                GatewayId = "1",
+                TelegramBundleType = TelegramBundleType.pull,
+                TimeprogReadTelegrams = reads
+            }, cancellationToken);
+            if (!await done.WaitAsync(TimeprogTimeout, cancellationToken))
+            {
+                await Console.Error.WriteLineAsync($"no answer to time programme bundle {bundleId} for {busAddress}");
             }
         }
 

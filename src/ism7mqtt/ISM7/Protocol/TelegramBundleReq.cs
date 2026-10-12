@@ -27,6 +27,9 @@ namespace ism7mqtt.ISM7.Protocol
 		[XmlElement("s03f1rd")]
 		public List<TimeprogRead> TimeprogReadTelegrams { get; set; }
 
+		[XmlElement("s03f3wr")]
+		public List<TimeprogWrite> TimeprogWriteTelegrams { get; set; }
+
         [XmlElement("erd")]
         public ErrorStateRead EStRead { get; set; }
 

@@ -82,9 +82,11 @@ namespace ism7mqtt.HomeAssistant
             foreach (var parameter in device.Parameters)
             {
                 var descriptor = parameter.Descriptor;
-                // A time programme day is read only and has a value only when its own converter decodes it.
+                // A time programme day is a text: its value is the day's periods, and writing the same text sets them.
                 var isTimeprog = parameter.Timeprog is not null;
-                var type = isTimeprog ? "sensor" : GetHomeAssistantType(descriptor);
+                var type = isTimeprog
+                    ? (parameter.IsWritable ? "text" : "sensor")
+                    : GetHomeAssistantType(descriptor);
                 if (type == null) continue;
                 if ((descriptor.ControlType == "DaySwitchTimes" && !isTimeprog) || descriptor.ControlType.Contains("NO_DISPLAY")) continue;
                 var uniqueId = ToHaObjectId(device, parameter);
@@ -118,6 +120,11 @@ namespace ism7mqtt.HomeAssistant
                 if (isTimeprog)
                 {
                     message.Add("icon", "mdi:calendar-clock");
+                    if (parameter.IsWritable)
+                    {
+                        message.Add("pattern", Timeprog03F1ConverterTemplate.WritePattern);
+                        message.Add("max", 64);
+                    }
                 }
                 else
                 {

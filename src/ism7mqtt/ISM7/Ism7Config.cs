@@ -216,6 +216,49 @@ namespace ism7mqtt
             return Array.Empty<InfoWrite>();
         }
 
+        /// <exception cref="FormatException">The value is not a valid day.</exception>
+        public IEnumerable<TimeprogWrite> GetTimeprogWriteRequest(string mqttTopic, ReadOnlyMemory<string> propertyParts, string value)
+        {
+            return _devices.Values.SelectMany(x => x)
+                .Where(x => x.MqttTopic == mqttTopic)
+                .SelectMany(x => x.GetTimeprogWriteRequest(propertyParts, value))
+                .ToList();
+        }
+
+        /// <exception cref="FormatException">A value is not a valid day.</exception>
+        public IEnumerable<TimeprogWrite> GetTimeprogWriteRequest(string mqttTopic, JsonObject data)
+        {
+            return _devices.Values.SelectMany(x => x)
+                .Where(x => x.MqttTopic == mqttTopic)
+                .SelectMany(x => x.GetTimeprogWriteRequest(data))
+                .ToList();
+        }
+
+        /// <summary>
+        /// Takes the acknowledged writes as the days' new values (an acknowledgement carries the data written) and
+        /// returns, per read bus address, the reads that confirm what the BM-2 actually stored.
+        /// </summary>
+        public (bool changed, List<(string busAddress, TimeprogRead read)> confirm) ProcessData(IEnumerable<TimeprogWriteResp> data)
+        {
+            var changed = false;
+            var confirm = new List<(string, TimeprogRead)>();
+            foreach (var value in data)
+            {
+                foreach (var (ba, devices) in _devices)
+                {
+                    foreach (var device in devices.Where(x => Converter.FromHex(x.WriteAddress) == Converter.FromHex(value.BusAddress)))
+                    {
+                        foreach (var timeprog in device.Parameters.Select(x => x.Timeprog).Where(x => x is not null && x.Matches(value)))
+                        {
+                            if (timeprog.SetData(value.Data)) changed = true;
+                            confirm.Add(($"0x{ba:X2}", timeprog.CreateRead()));
+                        }
+                    }
+                }
+            }
+            return (changed, confirm);
+        }
+
         public IEnumerable<RunningDevice> Devices => _devices.SelectMany(x => x.Value);
 
         public IEnumerable<JsonMessage> JsonMessages => _devices.Values
@@ -329,6 +372,31 @@ namespace ism7mqtt
                 return WritableParameters().SelectMany(x => x.GetWriteRequest(name, node));
             }
 
+            public IEnumerable<TimeprogWrite> GetTimeprogWriteRequest(ReadOnlyMemory<string> propertyParts, string value)
+            {
+                foreach (var parameter in WritableParameters())
+                {
+                    var write = parameter.GetTimeprogWrite(propertyParts, value);
+                    if (write is null) continue;
+                    write.BusAddress = WriteAddress;
+                    yield return write;
+                }
+            }
+
+            public IEnumerable<TimeprogWrite> GetTimeprogWriteRequest(JsonObject data)
+            {
+                foreach (var property in data)
+                {
+                    foreach (var parameter in WritableParameters())
+                    {
+                        var write = parameter.GetTimeprogWrite(property.Key, property.Value);
+                        if (write is null) continue;
+                        write.BusAddress = WriteAddress;
+                        yield return write;
+                    }
+                }
+            }
+
             public JsonMessage JsonMessage
             {
                 get
@@ -419,7 +487,7 @@ namespace ism7mqtt
 
             public bool IsDuplicate { get; set; }
 
-            public bool IsWritable => _descriptor.IsWritable && _converter is not Timeprog03F1ConverterTemplate;
+            public bool IsWritable => _descriptor.IsWritable;
 
             public bool HasValue => _converter.HasValue;
 
@@ -489,6 +557,30 @@ namespace ism7mqtt
                     }
                 }
                 return _converter.GetWrite(value);
+            }
+
+            /// <summary>The time programme write for a command addressed to this parameter, or null.</summary>
+            /// <exception cref="FormatException">The value is not a valid day.</exception>
+            public TimeprogWrite GetTimeprogWrite(ReadOnlyMemory<string> propertyParts, string value)
+            {
+                if (!IsWritable || Timeprog is null) return null;
+                var parts = propertyParts.Span;
+                if (parts.IsEmpty || MqttName != parts[0]) return null;
+                parts = parts.Slice(1);
+                if (IsDuplicate)
+                {
+                    if (parts.IsEmpty || _descriptor.PTID.ToString() != parts[0]) return null;
+                }
+                return Timeprog.CreateWrite(value);
+            }
+
+            /// <exception cref="FormatException">The value is not a valid day.</exception>
+            public TimeprogWrite GetTimeprogWrite(string name, JsonNode node)
+            {
+                if (!IsWritable || Timeprog is null) return null;
+                if (Name != name) return null;
+                if (!TryGetWriteValue(node, out var value)) return null;
+                return Timeprog.CreateWrite(value);
             }
 
             public IEnumerable<InfoWrite> GetWriteRequest(string name, JsonNode node)

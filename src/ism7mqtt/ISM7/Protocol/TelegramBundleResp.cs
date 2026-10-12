@@ -30,6 +30,9 @@ namespace ism7mqtt.ISM7.Protocol
         [XmlElement("s03f1rs")]
         public List<TimeprogReadResp> TimeprogTelegrams { get; set; }
 
+        [XmlElement("s03f3ac")]
+        public List<TimeprogWriteResp> TimeprogWriteTelegrams { get; set; }
+
         public PayloadType MessageType => PayloadType.TgrBundleResp;
     }
 }
