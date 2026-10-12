@@ -4,7 +4,7 @@ using System.Xml.Serialization;
 namespace ism7mqtt.ISM7.Protocol
 {
     /// <summary>The answer to a <see cref="TimeprogRead"/>: the day's switching periods as 20 bytes in hex.</summary>
-    [XmlRoot("s03f1rs")]
+    [XmlRoot("s03f2rs")]
     public class TimeprogReadResp
     {
         [XmlAttribute("se")]

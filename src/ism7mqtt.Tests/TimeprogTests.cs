@@ -108,7 +108,7 @@ public class TimeprogTests
     public void Response_Deserializes()
     {
         var data = Hex((6 * 60, 22 * 60));
-        var xml = $"<tbres bn=\"7\" gw=\"1\" st=\"OK\"><s03f1rs se=\"D;3\" ba=\"0x35\" st=\"OK\" hp=\"1\" ty=\"2\" hk=\"0\" d=\"1\" db=\"{data}\" /></tbres>";
+        var xml = $"<tbres bn=\"7\" gw=\"1\" st=\"OK\"><s03f2rs se=\"D;3\" ba=\"0x35\" st=\"OK\" hp=\"1\" ty=\"2\" hk=\"0\" d=\"1\" db=\"{data}\" /></tbres>";
         var resp = (TelegramBundleResp)new XmlSerializer(typeof(TelegramBundleResp)).Deserialize(new StringReader(xml))!;
         var day = Assert.Single(resp.TimeprogTelegrams!);
         Assert.Equal(TelegrResponseState.OK, day.State);

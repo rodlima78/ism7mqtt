@@ -27,7 +27,7 @@ namespace ism7mqtt.ISM7.Protocol
         [XmlElement("iac")]
         public List<InfonumberWriteResp> WriteTelegrams { get; set; }
 
-        [XmlElement("s03f1rs")]
+        [XmlElement("s03f2rs")]
         public List<TimeprogReadResp> TimeprogTelegrams { get; set; }
 
         [XmlElement("s03f3ac")]
