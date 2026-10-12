@@ -2,6 +2,8 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Xml.Serialization;
+using ism7mqtt.HomeAssistant;
+using ism7mqtt.ISM7;
 using ism7mqtt.ISM7.Protocol;
 using ism7mqtt.ISM7.Xml;
 using Xunit;
@@ -114,5 +116,27 @@ public class TimeprogTests
         Assert.Equal(TelegrResponseState.OK, day.State);
         Assert.Equal(data, day.Data);
         Assert.True(Day().Matches(day));
+    }
+
+    [Fact]
+    public void Discovery_ReadsTheDayThroughValueJson()
+    {
+        var json = """{"TcpPort":9092,"Devices":[{"DeviceTemplateId":220000,"ReadBusAddress":"0x35","WriteBusAddress":"0x30","Parameter":[320042]}]}""";
+        var path = Path.GetTempFileName();
+        File.WriteAllText(path, json);
+        try
+        {
+            var config = new Ism7Config(path, new Ism7Localizer("DEU"));
+            config.AddAllDevices("host").ToList();
+            var discovery = new HaDiscovery(config, null, "Wolf", new Ism7Localizer("DEU"));
+            var message = Assert.Single(discovery.GetDiscoveryInfo(), x => x.Path.StartsWith("homeassistant/text/"));
+            Assert.Equal("{{ value_json }}", message.Content["value_template"]!.ToString());
+            Assert.Equal(Timeprog03F1ConverterTemplate.WritePattern, message.Content["pattern"]!.ToString());
+            Assert.EndsWith("/set/Zeitprogramm_Zirkulation_1_Mo", message.Content["command_topic"]!.ToString());
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 }

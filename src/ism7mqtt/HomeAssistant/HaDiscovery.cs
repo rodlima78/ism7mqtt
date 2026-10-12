@@ -120,6 +120,9 @@ namespace ism7mqtt.HomeAssistant
                 if (isTimeprog)
                 {
                     message.Add("icon", "mdi:calendar-clock");
+                    // The day is published as a JSON string; the raw payload would carry its quotes into the
+                    // entity's state, where they fail the pattern.
+                    message.Add("value_template", "{{ value_json }}");
                     if (parameter.IsWritable)
                     {
                         message.Add("pattern", Timeprog03F1ConverterTemplate.WritePattern);
