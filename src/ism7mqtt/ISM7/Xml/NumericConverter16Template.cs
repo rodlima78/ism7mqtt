@@ -21,16 +21,19 @@ namespace ism7mqtt.ISM7.Xml
 
         private bool IsSigned => Type is "SS" or "SS10" or "SS100" or "SSPR";
 
-        /// <summary>The BM-2's maintenance percentage (PTID 220105) reads 0x8080 while no interval is running.</summary>
+        /// <summary>
+        /// The BM-2's maintenance percentage (PTID 220105) reads 0x8080 while no interval is running and 0x8000
+        /// while the maintenance message is off: any value with the top bit set is a marker, not a percentage.
+        /// </summary>
         public const int MaintenancePercentCtid = 220105;
-        private const ushort MaintenancePercentNotAvailable = 0x8080;
+        private const ushort MaintenancePercentMarker = 0x8000;
 
         public override JsonValue GetValue()
         {
             if (!HasValue)
                 throw new InvalidOperationException();
             if ((_value.Value == NotAvailable && IsSigned) ||
-                (_value.Value == MaintenancePercentNotAvailable && CTID == MaintenancePercentCtid))
+                ((_value.Value & MaintenancePercentMarker) != 0 && CTID == MaintenancePercentCtid))
             {
                 // The controller sends the smallest signed value while it has no reading
                 // (for instance a sensor during start-up), which is not a measurement.

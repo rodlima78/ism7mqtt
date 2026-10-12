@@ -7,6 +7,7 @@ public class MaintenancePercentTests
 {
     [Theory]
     [InlineData(NumericConverter16Template.MaintenancePercentCtid, 0x80, 0x80, null)]
+    [InlineData(NumericConverter16Template.MaintenancePercentCtid, 0x00, 0x80, null)]
     [InlineData(NumericConverter16Template.MaintenancePercentCtid, 42, 0, "42")]
     [InlineData(220104, 0x80, 0x80, "32896")]
     public void NoIntervalIsUnknown_OnlyForTheMaintenancePercentage(int ctid, byte low, byte high, string? expected)
