@@ -74,6 +74,20 @@ public class FaultTests
     }
 
     [Fact]
+    public void DevicesTheModuleDoesNotMention_ReadKeine_AfterTheFirstAnswer()
+    {
+        var config = new Ism7Config(TestFixtures.WriteParameterFile("happy-path.json", 1), new Ism7Localizer("DEU"));
+        config.AddAllDevices("host").ToList();
+        var reporting = config.Devices.Where(x => x.ReportsFaults).ToList();
+        Assert.NotEmpty(reporting);
+        Assert.All(reporting, x => Assert.Null(x.Faults));
+
+        Assert.True(config.SeedEmptyFaults());
+        Assert.All(reporting, x => Assert.Equal(Ism7Config.RunningDevice.NoActiveFault, x.ActiveFaultText));
+        Assert.False(config.SeedEmptyFaults());
+    }
+
+    [Fact]
     public void NoActiveFault_ReadsKeine_AndRepeatsAreNoChange()
     {
         var cha = Cha();

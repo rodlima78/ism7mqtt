@@ -443,12 +443,19 @@ namespace ism7mqtt
                 await Console.Error.WriteLineAsync($"fault list bundle {resp.BundleId}: state '{resp.State}' {resp.Errormsg}");
                 return;
             }
-            if (resp.ErrorStates is null || resp.ErrorStates.Count == 0) return;
-            if (_config.ProcessData(resp.ErrorStates))
+            var changed = resp.ErrorStates is { Count: > 0 } && _config.ProcessData(resp.ErrorStates);
+            if (!_faultsSeeded)
+            {
+                _faultsSeeded = true;
+                if (_config.SeedEmptyFaults()) changed = true;
+            }
+            if (changed)
             {
                 await _messageHandler(_config, cancellationToken);
             }
         }
+
+        private bool _faultsSeeded;
 
         private async Task RefreshTimeprogsAsync(List<string> busAddresses, CancellationToken cancellationToken)
         {

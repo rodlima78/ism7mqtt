@@ -284,6 +284,20 @@ namespace ism7mqtt
             return changed;
         }
 
+        /// <summary>
+        /// The module lists only the devices that have entries, so after its first answer a device it did not
+        /// mention has none: give it an empty list, which reads as no active fault, instead of no value at all.
+        /// </summary>
+        public bool SeedEmptyFaults()
+        {
+            var changed = false;
+            foreach (var device in Devices.Where(x => x.ReportsFaults && x.Faults is null))
+            {
+                if (device.SetFaults(Enumerable.Empty<ErrorStateResp>())) changed = true;
+            }
+            return changed;
+        }
+
         public IEnumerable<RunningDevice> Devices => _devices.SelectMany(x => x.Value);
 
         public IEnumerable<JsonMessage> JsonMessages => _devices.Values
