@@ -131,6 +131,39 @@ namespace ism7mqtt
             return _bundles[bundleId];
         }
 
+        /// <summary>The ISM7 answers at most seven time programme reads per bundle.</summary>
+        public const int TimeprogBundleSize = 7;
+
+        public IEnumerable<List<TimeprogRead>> GetTimeprogBundlesForDevice(string ba)
+        {
+            var reads = _devices[Converter.FromHex(ba)]
+                .SelectMany(x => x.Parameters)
+                .Select(x => x.Timeprog)
+                .Where(x => x is not null)
+                .Select(x => x.CreateRead())
+                .OrderBy(x => x.ProgramType).ThenBy(x => x.HzkInstance).ThenBy(x => x.HeatprogNumber).ThenBy(x => x.DayOfWeek)
+                .ToList();
+            for (int i = 0; i < reads.Count; i += TimeprogBundleSize)
+            {
+                yield return reads.Skip(i).Take(TimeprogBundleSize).ToList();
+            }
+        }
+
+        public bool ProcessData(IEnumerable<TimeprogReadResp> data)
+        {
+            var changed = false;
+            foreach (var value in data)
+            {
+                if (!_devices.TryGetValue(Converter.FromHex(value.BusAddress), out var devices)) continue;
+                foreach (var timeprog in devices.SelectMany(x => x.Parameters).Select(x => x.Timeprog).Where(x => x is not null))
+                {
+                    if (timeprog.Matches(value) && timeprog.SetData(value.Data))
+                        changed = true;
+                }
+            }
+            return changed;
+        }
+
         public bool ProcessData(IEnumerable<InfonumberReadResp> data)
         {
             foreach (var value in data)
@@ -358,13 +391,35 @@ namespace ism7mqtt
                 _converter = converter.Clone();
             }
 
-            public string Name => _descriptor.Name;
+            public string Name => _converter is Timeprog03F1ConverterTemplate timeprog
+                ? TimeprogName(timeprog, _descriptor.Name)
+                : _descriptor.Name;
+
+            /// <summary>
+            /// Every day of every time programme is named only after its weekday ("Mo", "Di", ...); the programme
+            /// and what it switches make the name unique and readable.
+            /// </summary>
+            private static string TimeprogName(Timeprog03F1ConverterTemplate timeprog, string day)
+            {
+                var type = timeprog.ProgramType switch
+                {
+                    0 => "Heizkreis",
+                    1 => "Warmwasser",
+                    2 => "Zirkulation",
+                    3 => "Lüftung",
+                    _ => $"Typ {timeprog.ProgramType}",
+                };
+                var circuit = timeprog.HzkInstance > 0 ? $" {timeprog.HzkInstance}" : String.Empty;
+                return $"Zeitprogramm {type}{circuit} {timeprog.HeatprogNumber} {day}";
+            }
+
+            public Timeprog03F1ConverterTemplate Timeprog => _converter as Timeprog03F1ConverterTemplate;
 
             public string MqttName => MqttEscape(Name);
 
             public bool IsDuplicate { get; set; }
 
-            public bool IsWritable => _descriptor.IsWritable;
+            public bool IsWritable => _descriptor.IsWritable && _converter is not Timeprog03F1ConverterTemplate;
 
             public bool HasValue => _converter.HasValue;
 

@@ -70,9 +70,9 @@ namespace ism7mqtt.HomeAssistant
             return Regex.Replace(id, "[^a-zA-Z0-9_ ]+", String.Empty, RegexOptions.Compiled);
         }
 
-        private string ToHaObjectId(Ism7Config.RunningDevice device, ParameterDescriptor parameter)
+        private string ToHaObjectId(Ism7Config.RunningDevice device, Ism7Config.RunningParameter parameter)
         {
-            var objectId = $"{_discoveryId}_{device.Name}_{device.WriteAddress}_{parameter.PTID}_{parameter.Name}";
+            var objectId = $"{_discoveryId}_{device.Name}_{device.WriteAddress}_{parameter.Descriptor.PTID}_{parameter.Name}";
             return LaunderHomeassistantId(objectId);
         }
 
@@ -82,10 +82,12 @@ namespace ism7mqtt.HomeAssistant
             foreach (var parameter in device.Parameters)
             {
                 var descriptor = parameter.Descriptor;
-                var type = GetHomeAssistantType(descriptor);
+                // A time programme day is read only and has a value only when its own converter decodes it.
+                var isTimeprog = parameter.Timeprog is not null;
+                var type = isTimeprog ? "sensor" : GetHomeAssistantType(descriptor);
                 if (type == null) continue;
-                if (descriptor.ControlType == "DaySwitchTimes" || descriptor.ControlType.Contains("NO_DISPLAY")) continue;
-                var uniqueId = ToHaObjectId(device, descriptor);
+                if ((descriptor.ControlType == "DaySwitchTimes" && !isTimeprog) || descriptor.ControlType.Contains("NO_DISPLAY")) continue;
+                var uniqueId = ToHaObjectId(device, parameter);
 
                 // Handle parameters with name-duplicates - their ID will be part of the topic
                 string deduplicator = "";
@@ -104,18 +106,25 @@ namespace ism7mqtt.HomeAssistant
                 string stateTopic = $"{device.MqttTopic}/{parameter.MqttName}{deduplicator}{discoveryTopicSSuffix}";
                 message.Add("state_topic", stateTopic);
 
-                if (descriptor.IsWritable)
+                if (parameter.IsWritable)
                 {
                     string commandTopic = $"{device.MqttTopic}/set/{parameter.MqttName}{deduplicator}{discoveryTopicSSuffix}";
                     message.Add("command_topic", commandTopic);
                 }
 
-                message.Add("name", _localizer[descriptor.Name]);
+                message.Add("name", _localizer[parameter.Name]);
                 message.Add("default_entity_id", $"{(type ?? "unknown")}.{uniqueId}");
 
-                foreach (var (key, value) in GetDiscoveryProperties(descriptor))
+                if (isTimeprog)
                 {
-                    message.Add(key, value);
+                    message.Add("icon", "mdi:calendar-clock");
+                }
+                else
+                {
+                    foreach (var (key, value) in GetDiscoveryProperties(descriptor))
+                    {
+                        message.Add(key, value);
+                    }
                 }
 
                 // Try to guess a suitable icon if none given

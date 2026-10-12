@@ -39,6 +39,15 @@ namespace ism7mqtt
 
         public Func<Ism7Config, CancellationToken, Task> OnInitializationFinishedAsync { get; set; }
 
+        /// <summary>
+        /// Time programmes cannot be subscribed to like info numbers, so they are read at start and again at this
+        /// interval. They only change when someone edits them.
+        /// </summary>
+        public TimeSpan TimeprogRefresh { get; set; } = TimeSpan.FromMinutes(15);
+
+        /// <summary>How long to wait for a time programme bundle before giving it up (it never stops the client).</summary>
+        public TimeSpan TimeprogTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
         public Ism7Client(Func<Ism7Config, CancellationToken, Task> messageHandler, string parameterPath, string host, Ism7Localizer localizer, string parameterXmlOverridePath = null)
         {
             _messageHandler = messageHandler;
@@ -286,8 +295,10 @@ namespace ism7mqtt
             var pendingSubscriptions = new List<(string busAddress, string bundleId)>();
 
             // Phase 1: pull all bundles, one at a time as FW5.1+ has problems with too many pull requests in parallel
+            var busAddresses = new List<string>();
             foreach (var busAddress in _config.AddAllDevices(_host))
             {
+                busAddresses.Add(busAddress);
                 var bundles = _config.GetBundlesForDevice(busAddress);
                 foreach (var (bundleId, infoReads) in bundles)
                 {
@@ -327,6 +338,8 @@ namespace ism7mqtt
             // Wait for the last pull response to be fully processed before subscribing.
             await WaitForBundleResponseAsync(semaphore, StartupTimeoutSpan, cancellationToken);
 
+            await PullTimeprogsAsync(busAddresses, cancellationToken);
+
             // Phase 2: send push subscribes after all pulls are complete
             foreach (var (busAddress, bundleId) in pendingSubscriptions)
             {
@@ -336,6 +349,88 @@ namespace ism7mqtt
             if (OnInitializationFinishedAsync is not null)
             {
                 await OnInitializationFinishedAsync(_config, cancellationToken);
+            }
+
+            _ = RefreshTimeprogsAsync(busAddresses, cancellationToken);
+        }
+
+        private async Task RefreshTimeprogsAsync(List<string> busAddresses, CancellationToken cancellationToken)
+        {
+            try
+            {
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    await Task.Delay(TimeprogRefresh, cancellationToken);
+                    await PullTimeprogsAsync(busAddresses, cancellationToken);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                await Console.Error.WriteLineAsync($"time programme refresh stopped: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Reads every time programme day of the given devices, one bundle at a time. A bundle the ISM7 does not
+        /// answer in time is skipped, never fatal: the info number values do not depend on it.
+        /// </summary>
+        private async Task PullTimeprogsAsync(List<string> busAddresses, CancellationToken cancellationToken)
+        {
+            foreach (var busAddress in busAddresses)
+            {
+                foreach (var reads in _config.GetTimeprogBundlesForDevice(busAddress))
+                {
+                    var bundleId = NextBundleId();
+                    var done = new SemaphoreSlim(0, 1);
+                    _dispatcher.SubscribeOnce(
+                        x => x.MessageType == PayloadType.TgrBundleResp && ((TelegramBundleResp)x).BundleId == bundleId,
+                        async (r, c) =>
+                        {
+                            try
+                            {
+                                await OnTimeprogValuesAsync(r, c);
+                            }
+                            finally
+                            {
+                                done.Release();
+                            }
+                        });
+                    foreach (var read in reads)
+                    {
+                        read.BusAddress = busAddress;
+                        read.Seq = $"D;{IdGenerator.GetNextSequenceId()}";
+                    }
+                    await SendAsync(new TelegramBundleReq
+                    {
+                        AbortOnError = false,
+                        BundleId = bundleId,
+                        GatewayId = "1",
+                        TelegramBundleType = TelegramBundleType.pull,
+                        TimeprogReadTelegrams = reads
+                    }, cancellationToken);
+                    if (!await done.WaitAsync(TimeprogTimeout, cancellationToken))
+                    {
+                        await Console.Error.WriteLineAsync($"no answer to time programme bundle {bundleId} for {busAddress}");
+                    }
+                }
+            }
+        }
+
+        private async Task OnTimeprogValuesAsync(IResponse response, CancellationToken cancellationToken)
+        {
+            var resp = (TelegramBundleResp)response;
+            if (!String.IsNullOrEmpty(resp.Errormsg) || resp.State != TelegrResponseState.OK)
+            {
+                await Console.Error.WriteLineAsync($"time programme bundle {resp.BundleId}: state '{resp.State}' {resp.Errormsg}");
+                return;
+            }
+            if (resp.TimeprogTelegrams is null) return;
+            if (_config.ProcessData(resp.TimeprogTelegrams.Where(x => x.State == TelegrResponseState.OK)))
+            {
+                await _messageHandler(_config, cancellationToken);
             }
         }
 
