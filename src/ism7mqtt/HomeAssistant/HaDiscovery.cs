@@ -231,18 +231,9 @@ namespace ism7mqtt.HomeAssistant
                     }
                     if (numeric.UnitName == null)
                     {
-                        switch(numeric.Name)
-                        {
-                        case "EEV HZ":
-                            yield return ("state_class", "measurement");
-                            break;
-                        case "EEV K":
-                            yield return ("state_class", "measurement");
-                            break;
-                        case "Verdichterstarts":
-                            yield return ("state_class", "total_increasing");
-                            break;
-                        }
+                        var stateClass = HaStateClass.ForUnitless(numeric.Name);
+                        if (stateClass != null)
+                            yield return ("state_class", stateClass);
                     }
                     else
                     {
@@ -270,19 +261,9 @@ namespace ism7mqtt.HomeAssistant
                         case "Wh":
                         case "kWh":
                         case "GWh":
-                            if(numeric.Name.ToLower().Contains("vortag") ||
-                               numeric.Name.ToLower().Contains("vorjahr") ||
-                               numeric.Name.ToLower().Contains("vorvorjahr") ||
-                               numeric.Name.ToLower().Contains("actueller tag") ||
-                               numeric.Name.ToLower().Contains("actueller monat") ||
-                               numeric.Name.ToLower().Contains("actuelles jahr"))
-                            {
-                                yield return ("state_class", "measurement");
-                            }
-                            else
-                            {
-                                yield return ("state_class", "total_increasing");
-                            }
+                            var energyStateClass = HaStateClass.ForEnergy(numeric.Name);
+                            if (energyStateClass != null)
+                                yield return ("state_class", energyStateClass);
                             yield return ("device_class", "energy");
                             break;
 
