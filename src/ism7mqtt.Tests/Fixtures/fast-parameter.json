@@ -1,0 +1,13 @@
+{
+  "TcpPort": {{TCP_PORT}},
+  "FastInterval": 10,
+  "Devices": [
+    {
+      "ReadBusAddress": "0x29",
+      "WriteBusAddress": null,
+      "DeviceTemplateId": 270000,
+      "Parameter": [270005, 270010],
+      "FastParameter": [270011]
+    }
+  ]
+}

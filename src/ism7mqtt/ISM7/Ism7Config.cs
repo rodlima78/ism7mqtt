@@ -20,6 +20,8 @@ namespace ism7mqtt
         private readonly IReadOnlyList<ParameterDescriptor> _parameterTemplates;
         private readonly IDictionary<byte, List<RunningDevice>> _devices;
         private readonly Dictionary<string, List<InfoRead>> _bundles = new();
+        private readonly HashSet<string> _fastBundles = new();
+        private readonly Dictionary<byte, HashSet<int>> _fastParameters = new();
         private readonly ConfigRoot _config;
         private readonly string _parameterXmlOverridePath;
 
@@ -91,7 +93,14 @@ namespace ism7mqtt
             foreach (var configDevice in _config.Devices.Where(x => x.ReadBusAddress == ba))
             {
                 var device = _deviceTemplates.First(x => x.DTID == configDevice.DeviceTemplateId);
-                var tids = configDevice.Parameter.ToHashSet();
+                var fast = (configDevice.FastParameter ?? new List<int>()).ToHashSet();
+                var tids = (configDevice.Parameter ?? new List<int>()).Concat(fast).ToHashSet();
+                if (!_fastParameters.TryGetValue(Converter.FromHex(ba), out var fastOfBus))
+                {
+                    fastOfBus = new HashSet<int>();
+                    _fastParameters.Add(Converter.FromHex(ba), fastOfBus);
+                }
+                fastOfBus.UnionWith(fast);
                 devices.Add(new RunningDevice(device.Name, ip, configDevice.ReadBusAddress, configDevice.WriteBusAddress, _parameterTemplates.Where(x => tids.Contains(x.PTID)), _converterTemplates.Where(x => tids.Contains(x.CTID)), _localizer)
                 {
                     DeviceTemplateId = device.DTID,
@@ -104,13 +113,30 @@ namespace ism7mqtt
         public IEnumerable<(string, List<InfoRead>)> GetBundlesForDevice(string ba)
         {
             var devices = _devices[Converter.FromHex(ba)];
+            _fastParameters.TryGetValue(Converter.FromHex(ba), out var fast);
+            var parameters = devices.SelectMany(x => x.Parameters)
+                .Where(x => x.InfoReadCount > 0)
+                .ToList();
+            // The fast parameters go in bundles of their own, so their bundles can be pushed at the fast interval.
+            foreach (var (isFast, group) in new[] { (false, parameters.Where(x => fast is null || !fast.Contains(x.PTID))),
+                                                    (true, parameters.Where(x => fast is not null && fast.Contains(x.PTID))) })
+            {
+                foreach (var bundle in SplitIntoBundles(group))
+                {
+                    var bundleId = IdGenerator.GetNextBundleIdString();
+                    _bundles.Add(bundleId, bundle);
+                    if (isFast) _fastBundles.Add(bundleId);
+                    yield return (bundleId, bundle);
+                }
+            }
+        }
+
+        private static List<List<InfoRead>> SplitIntoBundles(IEnumerable<RunningParameter> parameters)
+        {
             var bundles = new List<List<InfoRead>>();
             //https://github.com/zivillian/ism7mqtt/issues/177#issuecomment-3852657064
             //split into bundles of 20 info reads, but keep all info reads of a parameter in one bundle
-            var parameters = devices.SelectMany(x => x.Parameters)
-                .Where(x => x.InfoReadCount > 0)
-                .OrderByDescending(x => x.InfoReadCount);
-            foreach (var parameter in parameters)
+            foreach (var parameter in parameters.OrderByDescending(x => x.InfoReadCount))
             {
                 var bundle = bundles.FirstOrDefault(x => x.Count <= 20 - parameter.InfoReadCount);
                 if (bundle is null)
@@ -122,13 +148,13 @@ namespace ism7mqtt
                     bundle.AddRange(parameter.InfoReads);
                 }
             }
+            return bundles;
+        }
 
-            foreach (var bundle in bundles)
-            {
-                var bundleId = IdGenerator.GetNextBundleIdString();
-                _bundles.Add(bundleId, bundle);
-                yield return (bundleId, bundle);
-            }
+        /// <summary>The push interval of a bundle made of fast parameters, or null for the global interval.</summary>
+        public int? GetBundleInterval(string bundleId)
+        {
+            return _fastBundles.Contains(bundleId) ? _config.FastInterval : null;
         }
 
         public List<InfoRead> GetBundle(string bundleId)
@@ -605,6 +631,8 @@ namespace ism7mqtt
             public bool IsWritable => _descriptor.IsWritable;
 
             public bool HasValue => _converter.HasValue;
+
+            public int PTID => _descriptor.PTID;
 
             public int InfoReadCount => _converter.InfoReadCount;
 

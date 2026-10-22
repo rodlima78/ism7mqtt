@@ -308,12 +308,13 @@ namespace ism7mqtt
         private async Task SubscribeAsync(string busAddress, string bundleId, CancellationToken cancellationToken)
         {
             var infoReads = _config.GetBundle(bundleId);
+            var interval = _config.GetBundleInterval(bundleId) ?? Interval;
             bundleId = NextBundleId();
             _dispatcher.Subscribe(x => x.MessageType == PayloadType.TgrBundleResp && ((TelegramBundleResp) x).BundleId == bundleId, OnPushResponseAsync);
             foreach (var infoRead in infoReads)
             {
                 infoRead.BusAddress = busAddress;
-                infoRead.Intervall = Interval;
+                infoRead.Intervall = interval;
                 infoRead.Seq = NextSequenceId();
             }
             await SendAsync(new TelegramBundleReq

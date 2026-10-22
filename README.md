@@ -109,6 +109,23 @@ The ism7 accepts only a single connection, so you cannot use the Smartset applic
 
 The parameter.json contains all devices and the corresponding properties for the installation extracted from your setup. You can remove any property which is not needed.
 
+Properties that switch and should be seen soon after they change (pumps, valves, operating states) can be read at a shorter interval than the rest: list them in a device's `FastParameter` (they need not be repeated in `Parameter`) and set the interval in seconds with the top-level `FastInterval` (default 10). They are subscribed in bundles of their own; everything else keeps the global `--interval`. Keep the list short: each fast property adds traffic between the ism7 and the bus.
+
+```json
+{
+  "TcpPort": 9092,
+  "FastInterval": 10,
+  "Devices": [
+    {
+      "ReadBusAddress": "0x29",
+      "DeviceTemplateId": 270000,
+      "Parameter": [270005, 270010],
+      "FastParameter": [270011]
+    }
+  ]
+}
+```
+
 ## MQTT
 
 ism7mqtt initially fetches all properties declared in parameter.json and afterwards subscribes to changes with an intervall of 60 seconds. Whenever new values are received from ism7 a json update with all those properties is published to mqtt. Please be aware that an update contains only the changed properties - so only the initial message may contain all properties.
