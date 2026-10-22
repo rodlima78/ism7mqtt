@@ -148,6 +148,8 @@ Sending MQTT messages in order to set values involves using a general structure 
 > [!NOTE]
 > Please be aware that not all properties are writable. The ism7mqtt software attempts to validate whether a property can be set, but this may not always be accurate.
 
+A write is sent one second after the last command for the same property, so a burst of commands (a button pressed many times) becomes a single write with the last value. Commands that arrive while ism7mqtt is still reading the parameters at start wait until it has finished. A write the ism7 refuses is logged, and the connection stays up.
+
 Use this topic to send **JSON data**:
 ```txt
 Wolf/<ism7 ip address>/<device type>_<device bus address>/set

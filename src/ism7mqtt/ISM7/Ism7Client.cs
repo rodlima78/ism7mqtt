@@ -48,6 +48,27 @@ namespace ism7mqtt
         /// <summary>How long to wait for a time programme bundle before giving it up (it never stops the client).</summary>
         public TimeSpan TimeprogTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
+        /// <summary>
+        /// How long a parameter must go without a new command before its write is sent. A burst of commands for one
+        /// parameter becomes a single write with the last value.
+        /// </summary>
+        public TimeSpan WriteQuietPeriod
+        {
+            get => _writeQuietPeriod;
+            set
+            {
+                _writeQuietPeriod = value;
+                _coalescer = new WriteCoalescer(value);
+            }
+        }
+
+        private TimeSpan _writeQuietPeriod = TimeSpan.FromSeconds(1);
+        private WriteCoalescer _coalescer = new WriteCoalescer(TimeSpan.FromSeconds(1));
+
+        // Completed once every parameter has been read and subscribed: a write before that would find no parameter
+        // to address and be dropped, so commands wait for it.
+        private readonly TaskCompletionSource _initialized = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public Ism7Client(Func<Ism7Config, CancellationToken, Task> messageHandler, string parameterPath, string host, Ism7Localizer localizer, string parameterXmlOverridePath = null)
         {
             _messageHandler = messageHandler;
@@ -77,7 +98,51 @@ namespace ism7mqtt
             return ssl;
         }
 
+        /// <summary>
+        /// Takes a command and returns at once; the write is sent after the quiet period, and only if no newer command
+        /// for the same properties of the same device arrived meanwhile.
+        /// </summary>
         public Task OnCommandAsync(string mqttTopic, JsonObject data, CancellationToken cancellationToken)
+        {
+            var key = mqttTopic + "{" + String.Join(",", data.Select(x => x.Key).OrderBy(x => x, StringComparer.Ordinal)) + "}";
+            Detach(_coalescer.ScheduleAsync(key, async c =>
+            {
+                await _initialized.Task.WaitAsync(c);
+                await SendCommandAsync(mqttTopic, data, c);
+            }, cancellationToken));
+            return Task.CompletedTask;
+        }
+
+        /// <summary>As the JSON form, for a single property set on its own topic.</summary>
+        public Task OnCommandAsync(string mqttTopic, ReadOnlyMemory<string> propertyParts, string value, CancellationToken cancellationToken)
+        {
+            var key = mqttTopic + "/" + String.Join("/", propertyParts.ToArray());
+            Detach(_coalescer.ScheduleAsync(key, async c =>
+            {
+                await _initialized.Task.WaitAsync(c);
+                await SendCommandAsync(mqttTopic, propertyParts, value, c);
+            }, cancellationToken));
+            return Task.CompletedTask;
+        }
+
+        // A command is never awaited by the MQTT handler, which must stay free for the next one; its failure is logged
+        // here instead of being lost.
+        private static async void Detach(Task task)
+        {
+            try
+            {
+                await task;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"write failed: {ex.Message}");
+            }
+        }
+
+        private Task SendCommandAsync(string mqttTopic, JsonObject data, CancellationToken cancellationToken)
         {
             try
             {
@@ -97,7 +162,7 @@ namespace ism7mqtt
             }
         }
 
-        public Task OnCommandAsync(string mqttTopic, ReadOnlyMemory<string> propertyParts, string value, CancellationToken cancellationToken)
+        private Task SendCommandAsync(string mqttTopic, ReadOnlyMemory<string> propertyParts, string value, CancellationToken cancellationToken)
         {
             try
             {
@@ -188,17 +253,37 @@ namespace ism7mqtt
         private async Task OnWriteResponse(IResponse response, CancellationToken cancellationToken)
         {
             var resp = (TelegramBundleResp) response;
-            if (!String.IsNullOrEmpty(resp.Errormsg))
-                throw new InvalidDataException(resp.Errormsg);
-            if (resp.State != TelegrResponseState.OK)
-                throw new InvalidDataException($"unexpected state '{resp.State}");
-            
-            
+            // A refused write is the ISM7 answering, not the connection failing: it is logged and the client goes on.
+            // Thrown here, it ended the read loop and with it the whole program, losing every write still queued.
+            var refusal = DescribeWriteRefusal(resp);
+            if (refusal is not null)
+            {
+                await Console.Error.WriteLineAsync(refusal);
+            }
+            if (resp.WriteTelegrams is null || (resp.State != TelegrResponseState.OK && resp.WriteTelegrams.All(x => x.State != TelegrResponseState.OK)))
+                return;
+
             var hasDatapoints = _config.ProcessData(resp.WriteTelegrams.Where(x => x.State == TelegrResponseState.OK));
             if (hasDatapoints)
             {
                 await _messageHandler(_config, cancellationToken);
             }
+        }
+
+        /// <summary>What to log for a write bundle the ISM7 did not fully accept, or null when it accepted all of it.</summary>
+        public static string DescribeWriteRefusal(TelegramBundleResp resp)
+        {
+            var parts = new List<string>();
+            if (!String.IsNullOrEmpty(resp.Errormsg) || resp.State != TelegrResponseState.OK)
+            {
+                parts.Add($"state '{resp.State}' {resp.Errormsg}".TrimEnd());
+            }
+            foreach (var failed in resp.WriteTelegrams ?? Enumerable.Empty<InfonumberWriteResp>())
+            {
+                if (failed.State == TelegrResponseState.OK) continue;
+                parts.Add($"info number {failed.InfoNumber} at {failed.BusAddress}: state '{failed.State}'");
+            }
+            return parts.Count == 0 ? null : $"write {resp.BundleId} refused: " + String.Join("; ", parts);
         }
 
         private async Task FillPipeAsync(PipeWriter target, CancellationToken cancellationToken)
@@ -402,6 +487,8 @@ namespace ism7mqtt
             {
                 await SubscribeAsync(busAddress, bundleId, cancellationToken);
             }
+
+            _initialized.TrySetResult();
 
             if (OnInitializationFinishedAsync is not null)
             {
