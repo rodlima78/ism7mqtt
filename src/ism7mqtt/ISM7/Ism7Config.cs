@@ -101,7 +101,8 @@ namespace ism7mqtt
                     _fastParameters.Add(Converter.FromHex(ba), fastOfBus);
                 }
                 fastOfBus.UnionWith(fast);
-                devices.Add(new RunningDevice(device.Name, ip, configDevice.ReadBusAddress, configDevice.WriteBusAddress, _parameterTemplates.Where(x => tids.Contains(x.PTID)), _converterTemplates.Where(x => tids.Contains(x.CTID)), _localizer)
+                var writable = (configDevice.WritableParameter ?? new List<int>()).ToHashSet();
+                devices.Add(new RunningDevice(device.Name, ip, configDevice.ReadBusAddress, configDevice.WriteBusAddress, _parameterTemplates.Where(x => tids.Contains(x.PTID)), _converterTemplates.Where(x => tids.Contains(x.CTID)), _localizer, writable)
                 {
                     DeviceTemplateId = device.DTID,
                     // The module keeps one fault list per bus address; the first device configured there owns it.
@@ -340,7 +341,7 @@ namespace ism7mqtt
         {
             private readonly List<RunningParameter> _parameter;
 
-            public RunningDevice(string name, string ip, string readBusAddress, string writeBusAddress, IEnumerable<ParameterDescriptor> parameter, IEnumerable<ConverterTemplateBase> converter, Ism7Localizer localizer)
+            public RunningDevice(string name, string ip, string readBusAddress, string writeBusAddress, IEnumerable<ParameterDescriptor> parameter, IEnumerable<ConverterTemplateBase> converter, Ism7Localizer localizer, ISet<int> writable = null)
             {
                 Name = name;
                 IP = ip;
@@ -352,7 +353,7 @@ namespace ism7mqtt
                 foreach (var descriptor in parameter)
                 {
                     var conv = converter.FirstOrDefault(x=>x.CTID == descriptor.PTID);
-                    if (conv != null) _parameter.Add(new RunningParameter(descriptor, conv, localizer));
+                    if (conv != null) _parameter.Add(new RunningParameter(descriptor, conv, localizer, writable?.Contains(descriptor.PTID) == true));
                 }
 
                 EnsureUniqueParameterNames();
@@ -593,9 +594,12 @@ namespace ism7mqtt
             private readonly Ism7Localizer _localizer;
             private readonly ConverterTemplateBase _converter;
 
-            public RunningParameter(ParameterDescriptor descriptor, ConverterTemplateBase converter, Ism7Localizer localizer)
+            private readonly bool _forceWritable;
+
+            public RunningParameter(ParameterDescriptor descriptor, ConverterTemplateBase converter, Ism7Localizer localizer, bool forceWritable = false)
             {
                 _descriptor = descriptor;
+                _forceWritable = forceWritable;
                 _localizer = localizer;
                 _converter = converter.Clone();
             }
@@ -628,7 +632,7 @@ namespace ism7mqtt
 
             public bool IsDuplicate { get; set; }
 
-            public bool IsWritable => _descriptor.IsWritable;
+            public bool IsWritable => _descriptor.IsWritable || _forceWritable;
 
             public bool HasValue => _converter.HasValue;
 

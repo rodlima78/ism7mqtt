@@ -34,6 +34,13 @@ namespace ism7mqtt.ISM7.Config
         /// their own; they need not be repeated in <see cref="Parameter"/>.
         /// </summary>
         public List<int> FastParameter { get; set; }
+
+        /// <summary>
+        /// Parameters the template marks read-only that are written anyway: installer settings the module accepts
+        /// although its own app offers them only for reading. They also need to be read (<see cref="Parameter"/> or
+        /// <see cref="FastParameter"/>).
+        /// </summary>
+        public List<int> WritableParameter { get; set; }
     }
 
     [JsonSourceGenerationOptions(GenerationMode = JsonSourceGenerationMode.Metadata)]

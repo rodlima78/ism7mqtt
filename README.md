@@ -126,6 +126,22 @@ Properties that switch and should be seen soon after they change (pumps, valves,
 }
 ```
 
+Some installer settings are marked read-only in Wolf's parameter templates although the module accepts writes to them (for example the function assigned to a configurable output). List those in a device's `WritableParameter` to write them anyway; they must also be read (`Parameter` or `FastParameter`), and Home Assistant discovery then offers them as controls instead of sensors. Only list settings you have checked: a write the device does not support may be acknowledged without effect, and a wrong value in a configuration setting can stop the installation from working.
+
+```json
+{
+  "Devices": [
+    {
+      "ReadBusAddress": "0x8",
+      "WriteBusAddress": "0x3",
+      "DeviceTemplateId": 270000,
+      "Parameter": [270069],
+      "WritableParameter": [270069]
+    }
+  ]
+}
+```
+
 ## MQTT
 
 ism7mqtt initially fetches all properties declared in parameter.json and afterwards subscribes to changes with an intervall of 60 seconds. Whenever new values are received from ism7 a json update with all those properties is published to mqtt. Please be aware that an update contains only the changed properties - so only the initial message may contain all properties.

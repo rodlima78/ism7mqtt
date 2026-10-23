@@ -86,7 +86,7 @@ namespace ism7mqtt.HomeAssistant
                 var isTimeprog = parameter.Timeprog is not null;
                 var type = isTimeprog
                     ? (parameter.IsWritable ? "text" : "sensor")
-                    : GetHomeAssistantType(descriptor);
+                    : GetHomeAssistantType(descriptor, parameter.IsWritable);
                 if (type == null) continue;
                 if ((descriptor.ControlType == "DaySwitchTimes" && !isTimeprog) || descriptor.ControlType.Contains("NO_DISPLAY")) continue;
                 var uniqueId = ToHaObjectId(device, parameter);
@@ -131,7 +131,7 @@ namespace ism7mqtt.HomeAssistant
                 }
                 else
                 {
-                    foreach (var (key, value) in GetDiscoveryProperties(descriptor))
+                    foreach (var (key, value) in GetDiscoveryProperties(descriptor, parameter.IsWritable))
                     {
                         message.Add(key, value);
                     }
@@ -217,35 +217,35 @@ namespace ism7mqtt.HomeAssistant
             }
         }
 
-        private string GetHomeAssistantType(ParameterDescriptor descriptor)
+        private string GetHomeAssistantType(ParameterDescriptor descriptor, bool writable)
         {
             switch (descriptor)
             {
                 case ListParameterDescriptor list:
                     // Try to auto-detect switch and select vs sensor and binary_sensor
-                    if (list.IsWritable)
+                    if (writable)
                     {
                         return list.IsBoolean ? "switch" : "select";
                     }
 
                     return list.IsBoolean ? "binary_sensor" : "sensor";
-                case NumericParameterDescriptor numeric:
-                    return numeric.IsWritable ? "number" : "sensor";
-                case TextParameterDescriptor text:
-                    return text.IsWritable ? "text" : "sensor";
-                case OtherParameterDescriptor other:
-                    return other.IsWritable ? "text" : "sensor";
+                case NumericParameterDescriptor:
+                    return writable ? "number" : "sensor";
+                case TextParameterDescriptor:
+                    return writable ? "text" : "sensor";
+                case OtherParameterDescriptor:
+                    return writable ? "text" : "sensor";
                 default:
                     return null;
             }
         }
 
-        private IEnumerable<(string, JsonNode)> GetDiscoveryProperties(ParameterDescriptor descriptor)
+        private IEnumerable<(string, JsonNode)> GetDiscoveryProperties(ParameterDescriptor descriptor, bool writable)
         {
             switch (descriptor)
             {
                 case NumericParameterDescriptor numeric:
-                    if (numeric.IsWritable)
+                    if (writable)
                     {
                         if (numeric.MinValueCondition != null)
                         {
